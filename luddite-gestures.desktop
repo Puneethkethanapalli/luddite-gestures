@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Luddite Gestures
+GenericName=Touchpad Gestures
+Comment=Edit Hyprland touchpad gestures, and see which ones shadow each other
+Exec=omarchy-shell shell toggle io.github.techluddite.gestures
+TryExec=omarchy-shell
+Icon=@ICON@
+Terminal=false
+StartupNotify=false
+Categories=Settings;DesktopSettings;
+Keywords=hyprland;omarchy;gesture;gestures;touchpad;trackpad;swipe;pinch;
+X-LudditeGestures-Managed=true
