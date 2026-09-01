@@ -13,7 +13,7 @@ added last week. It has. This tells you before you save.
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/techluddite/LudditeGestures.git --enable --yes
+omarchy plugin add https://github.com/TechLuddite/LudditeGestures.git --enable --yes
 ```
 
 Open it from **SUPER+SPACE › Luddite Gestures**. No network access, no sudo.
