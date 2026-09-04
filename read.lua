@@ -29,7 +29,11 @@
 -- "custom" and custom=true, so the panel can show it without pretending it
 -- could round-trip it through a dropdown.
 --
--- Chunks load in text mode only ("t"), never as precompiled bytecode.
+-- Chunks load in text mode only ("t"), never as precompiled bytecode, and run
+-- in an environment of their own (see `env` below) that holds the recorders
+-- and nothing that can reach outside the interpreter: no os, io, require,
+-- load, dofile, debug or print. Hyprland hands a config the whole library, so
+-- this is the one place a config is read by something that cannot act on it.
 
 local out = {}
 
@@ -96,8 +100,8 @@ local recorded = {
   end,
 }
 
-hl = setmetatable(recorded, { __index = function() return inert() end })
-o = inert()
+local hl = setmetatable(recorded, { __index = function() return inert() end })
+local o = inert()
 
 -- A double swipe has to be timed in Lua, so the panel writes a helper into its
 -- block and calls it once per guarded gesture. The block opens with
@@ -105,8 +109,8 @@ o = inert()
 -- definition -- so those calls report themselves as data here, and come back
 -- into the dropdowns as gestures rather than as an opaque callback.
 --
--- This has to be a real global: the _G fallback below hands out inert tables for
--- undefined names, and an inert table would silently record nothing.
+-- This has to be a real name in the environment: unknown names resolve to inert
+-- tables, and an inert table would silently record nothing.
 local function recordRun(spec, forceDouble)
   if type(spec) ~= "table" then return end
   local double = forceDouble or spec.double == true
@@ -124,15 +128,35 @@ local function recordRun(spec, forceDouble)
     spec.args or "")
 end
 
-luddite = {
+local luddite = {
   run = recordRun,
   -- What the helper was called before it also handled dispatchers. A block
   -- written by the older panel and not yet re-saved still has to read.
   double = function(spec) return recordRun(spec, true) end,
 }
 
--- Undefined globals in a personal config must not abort the read.
-setmetatable(_G, { __index = function() return inert() end })
+-- The environment the config runs in. Only the recorders and the parts of the
+-- standard library that cannot touch the host: no os, io, package, require,
+-- load, loadfile, dofile, debug, collectgarbage -- and no print, which would
+-- write into the record stream this script is printing.
+--
+-- A personal config written for Hyprland may still say os.getenv("HOME") or
+-- dofile(...). Here those names are unknown, so they resolve to the inert table
+-- like any other undefined global: indexing and calling them does nothing, and
+-- concatenating one yields "". The file reads to the end, and nothing it says
+-- can run a command, open a file, or load code.
+local env = {
+  hl = hl, o = o, luddite = luddite,
+  math = math, string = string, table = table, utf8 = utf8,
+  tostring = tostring, tonumber = tonumber, type = type,
+  pairs = pairs, ipairs = ipairs, next = next, select = select,
+  rawget = rawget, rawset = rawset, rawequal = rawequal, rawlen = rawlen,
+  setmetatable = setmetatable, getmetatable = getmetatable,
+  pcall = pcall, xpcall = xpcall, error = error, assert = assert,
+  unpack = table.unpack,
+}
+env._G = env
+setmetatable(env, { __index = function() return inert() end })
 
 local args, checkOnly = arg, false
 if args[1] == "--check" then
@@ -153,7 +177,7 @@ else
   file:close()
 end
 
-local chunk, loadErr = load(source, name, "t")
+local chunk, loadErr = load(source, name, "t", env)
 if not chunk then
   io.stderr:write(tostring(loadErr))
   os.exit(1)

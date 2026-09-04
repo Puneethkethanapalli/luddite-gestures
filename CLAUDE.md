@@ -79,7 +79,17 @@ so there is no second grammar to keep in sync with Hyprland's, and a config
 referencing helpers this plugin has never heard of still reads. Undefined
 globals return an inert table that answers to being indexed and called.
 
-Chunks load in text mode only (`load(src, name, "t")`), never as bytecode.
+Chunks load in text mode only, never as bytecode, and into a **sealed
+environment**: `load(src, name, "t", env)` where `env` holds the recorders and
+the pure standard library (`math`, `string`, `table`, `utf8`, `pairs`, `pcall`
+and friends) and nothing else. `os`, `io`, `package`, `require`, `load`,
+`dofile`, `debug`, `collectgarbage` and `print` are absent, and an unknown name
+resolves to the inert table. The marketplace review pointed out, correctly, that
+before this the panel executed the user's config with the whole library on
+every open. `print` is excluded for a second reason: it would write into the
+record stream. Every process the panel starts also runs with a cleared
+environment and a two-directory PATH (`processEnvironment` in `Panel.qml`), so a
+`LUA_INIT` cannot reach the reader.
 
 The file is read in **three segments** — before the block, the block, after it —
 so the block's position, and therefore which gestures Hyprland registers first,
@@ -187,6 +197,12 @@ implicit directory import that nobody needs to answer.
 8. **There is no live preview, on purpose.** Hyprland offers no way to
    unregister a gesture, so evaluating a draft would stack it on top of the real
    ones instead of replacing them, and the preview would lie.
+9. **Nothing the panel starts inherits the shell's environment or resolves a
+   name on PATH.** Every binary is named by absolute path, every process gets
+   `clearEnvironment` and an explicit PATH of `/usr/bin:/bin`, and the two
+   launcher-entry scripts in `Service.qml` run under `env -i` and `timeout`,
+   write through `mktemp` in the destination directory, and refuse a symlink at
+   the destination. Keep it that way; the marketplace reviews for exactly this.
 
 ## Three QML traps that cost real time
 
@@ -235,7 +251,7 @@ the site.
 ## Testing
 
 ```bash
-node test/run.js          # 187 checks; no compositor needed
+node test/run.js          # 199 checks; no compositor needed
 omarchy plugin validate . # what the shell enforces at install
 ```
 

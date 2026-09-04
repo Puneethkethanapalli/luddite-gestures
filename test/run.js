@@ -721,6 +721,37 @@ check("the README shows the icon in the bar",
   readme.indexOf("(docs/bar.png)") !== -1 && fs.existsSync(path.join(root, "docs", "bar.png")))
 
 // ---------------------------------------------------------------------------
+// What the marketplace review asked for, and what it will read the source for
+// again: no process the panel starts inherits the shell's environment or
+// resolves a name on PATH, and the config never runs with the real library.
+console.log("\nprocess hygiene")
+
+const serviceSrc = fs.readFileSync(path.join(root, "Service.qml"), "utf8")
+const readSrc = fs.readFileSync(path.join(root, "read.lua"), "utf8")
+
+check("every Process in the panel clears its environment",
+  (panelSrc.match(/Process \{/g) || []).length === (panelSrc.match(/clearEnvironment: true/g) || []).length
+    && (panelSrc.match(/Process \{/g) || []).length >= 6)
+check("every Process in the panel is given the fixed environment",
+  (panelSrc.match(/environment: root\.processEnvironment/g) || []).length === (panelSrc.match(/Process \{/g) || []).length)
+check("the panel names lua and hyprctl by absolute path",
+  !/\["lua"|\["hyprctl"/.test(panelSrc) && /"\/usr\/bin\/lua"/.test(panelSrc) && /"\/usr\/bin\/hyprctl"/.test(panelSrc))
+check("the fixed PATH is two system directories",
+  /PATH:\s*"\/usr\/bin:\/bin"/.test(panelSrc))
+check("the service launches through env -i, timeout and /bin/sh by path",
+  /"\/usr\/bin\/env",\s*"-i"/.test(serviceSrc) && /"\/usr\/bin\/timeout"/.test(serviceSrc) && /"\/bin\/sh"/.test(serviceSrc)
+    && !/execDetached\(\["sh"/.test(serviceSrc))
+check("the service writes through mktemp in the destination directory",
+  /mktemp "\$dir\/\.luddite-gestures\.XXXXXX"/.test(serviceSrc) && !/\.luddite\.new/.test(serviceSrc))
+check("the service refuses a symlink at the destination, on install and on remove",
+  (serviceSrc.match(/\[ -L "\$[12]" \] && exit 0/g) || []).length === 2)
+check("read.lua loads the config into its own environment, not the global one",
+  /load\(source, name, "t", env\)/.test(readSrc) && !/setmetatable\(_G/.test(readSrc))
+check("that environment offers none of os, io, require, load, dofile, debug or print",
+  !/^\s*(os|io|package|require|load|loadfile|dofile|debug|collectgarbage|print)\s*=/m.test(
+    readSrc.slice(readSrc.indexOf("local env = {"), readSrc.indexOf("env._G = env"))))
+
+// ---------------------------------------------------------------------------
 console.log("\nread.lua harness (integration)")
 
 let lua = true
@@ -763,6 +794,30 @@ if (!lua) {
     state.gestures[4].zoom_level === "+0.5" && state.gestures[4].disable_inhibit === true)
   check("reads a direction spelled the short way, verbatim",
     state.gestures[3].direction === "l" && Schema.canonicalDirection(state.gestures[3].direction) === "left")
+
+  // The config is the user's own file, but Hyprland gives it the whole library
+  // and the panel must not. Everything here would act on the host if it ran
+  // with the real globals; under the sealed environment it reads to the end,
+  // does nothing, and the gestures around it still come out.
+  const SANDBOX_MARK = path.join(root, "test", "SANDBOXED")
+  const sandboxFixture = [
+    'os.execute("touch ' + SANDBOX_MARK + '")',
+    'local f = io.open("' + SANDBOX_MARK + '", "w") if f then f:write("x") f:close() end',
+    'pcall(require, "socket")',
+    'dofile(os.getenv("HOME") .. "/nothing.lua")',
+    'load("os.execute(\'touch ' + SANDBOX_MARK + '\')")()',
+    'print("g\t9\tup\tclose\t\t\t\tfalse")',
+    'hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })',
+  ].join("\n")
+  const sandboxOut = execFileSync("lua", [path.join(root, "read.lua"), "-e", sandboxFixture], { encoding: "utf8" })
+  const sandboxState = Lua.parseHarness(sandboxOut)
+  check("a config that shells out, opens files and loads code reads without doing any of it",
+    !fs.existsSync(SANDBOX_MARK))
+  check("that config still yields its gestures",
+    sandboxState.gestures.length === 1 && sandboxState.gestures[0].fingers === 3)
+  check("a print in the config cannot forge a record",
+    !sandboxState.gestures.some(g => g.fingers === 9))
+  if (fs.existsSync(SANDBOX_MARK)) fs.unlinkSync(SANDBOX_MARK)
 
   // A workspace name is free text from a text field. Render a hostile one, run
   // the result through Lua for real, and confirm it comes back as inert data:
