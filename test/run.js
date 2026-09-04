@@ -32,7 +32,8 @@ const Lua = load("LuaGestures.js", [
   "BEGIN_FENCE", "END_FENCE", "renderGesture", "renderTunables", "renderBody",
   "renderBlock", "splitBlock", "applyBlock", "parseHarness", "findConflicts",
   "findFieldErrors", "luaString", "renderHelperGesture", "RUN_HELPER",
-  "needsHelper", "dispatchCall", "badLuaArgs"
+  "needsHelper", "dispatchCall", "badLuaArgs",
+  "MAX_OUTPUT_BYTES", "MAX_RECORDS", "MAX_FIELD_BYTES"
 ])
 
 let failures = 0
@@ -729,11 +730,10 @@ console.log("\nprocess hygiene")
 const serviceSrc = fs.readFileSync(path.join(root, "Service.qml"), "utf8")
 const readSrc = fs.readFileSync(path.join(root, "read.lua"), "utf8")
 
-check("every Process in the panel clears its environment",
-  (panelSrc.match(/Process \{/g) || []).length === (panelSrc.match(/clearEnvironment: true/g) || []).length
-    && (panelSrc.match(/Process \{/g) || []).length >= 6)
-check("every Process in the panel is given the fixed environment",
-  (panelSrc.match(/environment: root\.processEnvironment/g) || []).length === (panelSrc.match(/Process \{/g) || []).length)
+check("every Process in the panel clears its environment and takes the fixed one",
+  (panelSrc.match(/Process \{/g) || []).length >= 4
+    && (panelSrc.match(/Process \{/g) || []).length === (panelSrc.match(/clearEnvironment: true/g) || []).length
+    && (panelSrc.match(/Process \{/g) || []).length === (panelSrc.match(/environment: root\.processEnvironment/g) || []).length)
 check("the panel names lua and hyprctl by absolute path",
   !/\["lua"|\["hyprctl"/.test(panelSrc) && /"\/usr\/bin\/lua"/.test(panelSrc) && /"\/usr\/bin\/hyprctl"/.test(panelSrc))
 check("the fixed PATH is two system directories",
@@ -750,6 +750,52 @@ check("read.lua loads the config into its own environment, not the global one",
 check("that environment offers none of os, io, require, load, dofile, debug or print",
   !/^\s*(os|io|package|require|load|loadfile|dofile|debug|collectgarbage|print)\s*=/m.test(
     readSrc.slice(readSrc.indexOf("local env = {"), readSrc.indexOf("env._G = env"))))
+
+// The second review: nothing bounded the readers. Every one now runs inside
+// timeout (a wall-clock deadline, TERM then KILL across the process group) and
+// prlimit (address space and CPU), read.lua meters itself, the panel refuses
+// output past a ceiling, and readers are stopped on supersession and destruction.
+console.log("\nbounded readers")
+
+check("every reader and the compile check go through the fence",
+  /command: readerCommand\(segment\)/.test(panelSrc)
+    && (panelSrc.match(/startReader\("(before|body|after)"/g) || []).length === 3
+    && /checkProc\.command = fenced\(/.test(panelSrc))
+check("the fence is timeout with TERM-to-KILL escalation, then prlimit on address space and CPU",
+  /"\/usr\/bin\/timeout", "-k", "1", String\(seconds\)/.test(panelSrc)
+    && /"\/usr\/bin\/prlimit", "--as=" \+ readerMemoryBytes, "--cpu=" \+ seconds/.test(panelSrc))
+check("hyprctl runs under a deadline too",
+  (panelSrc.match(/"\/usr\/bin\/timeout", "-k", "1", "10", "\/usr\/bin\/hyprctl"/g) || []).length === 2)
+check("a new read stops the readers of the old one first",
+  /function readFile\(text\) \{\n    var split = Lua\.splitBlock\(text\)\n    stopReaders\(\)/.test(panelSrc))
+check("destroying the panel stops every process it owns",
+  /Component\.onDestruction: \{\n    stopReaders\(\)\n    checkProc\.running = false\n    reloadProc\.running = false\n    errorsProc\.running = false/.test(panelSrc))
+check("a segment is complete only when both its output and its exit code are in",
+  /p\[names\[i\]\]\.out === null \|\| p\[names\[i\]\]\.code === null/.test(panelSrc))
+check("each reader carries its read's generation, and a foreign generation is dropped",
+  /property int generation: 0/.test(panelSrc)
+    && /if \(generation !== root\.readGeneration\) return/.test(panelSrc)
+    && /generation !== p\.generation/.test(panelSrc))
+check("readers are fresh objects per read, not three reused ones",
+  /readerComponent\.createObject/.test(panelSrc) && /reader\.destroy\(\)/.test(panelSrc)
+    && !/id: bodyReader/.test(panelSrc))
+check("a failed or stopped read publishes nothing",
+  /if \(root\.readFailed\) return\n    var parsed/.test(panelSrc))
+check("a failed read blocks saving",
+  /readonly property bool blocked: fieldErrors\.length > 0 \|\| readFailed/.test(panelSrc))
+check("read.lua meters instructions and memory with a hook the config cannot remove",
+  /debug\.sethook\(function\(\)/.test(readSrc) && /MAX_INSTRUCTIONS/.test(readSrc) && /MAX_MEMORY_KB/.test(readSrc))
+check("read.lua stops with os.exit, which a pcall in the config cannot catch",
+  /local function fail\(message\)\n  io\.stderr:write\(message\)\n  os\.exit\(1\)/.test(readSrc))
+check("parseHarness refuses output past its ceilings instead of retaining part of it",
+  Lua.parseHarness("x".repeat(Lua.MAX_OUTPUT_BYTES + 1)).overflow === true
+    && Lua.parseHarness(Array(Lua.MAX_RECORDS + 1).fill("g\t3\tup\tclose\t\t\t\tfalse").join("\n")).overflow === true
+    && Lua.parseHarness("g\t3\tup\tclose\t\t\t" + "x".repeat(Lua.MAX_FIELD_BYTES + 1) + "\tfalse").overflow === true
+    && Lua.parseHarness(Array(Lua.MAX_RECORDS).fill("g\t3\tup\tclose\t\t\t\tfalse").join("\n")).gestures.length === Lua.MAX_RECORDS)
+check("read.lua's own ceilings sit inside the panel's",
+  /MAX_RECORDS = 512/.test(readSrc) && Lua.MAX_RECORDS === 512
+    && /MAX_FIELD = 4096/.test(readSrc) && Lua.MAX_FIELD_BYTES === 4096
+    && /MAX_OUTPUT = 256 \* 1024/.test(readSrc) && Lua.MAX_OUTPUT_BYTES === 256 * 1024)
 
 // ---------------------------------------------------------------------------
 console.log("\nread.lua harness (integration)")
@@ -818,6 +864,38 @@ if (!lua) {
   check("a print in the config cannot forge a record",
     !sandboxState.gestures.some(g => g.fingers === 9))
   if (fs.existsSync(SANDBOX_MARK)) fs.unlinkSync(SANDBOX_MARK)
+
+  // The budgets, exercised. Each of these would run forever or without bound
+  // under a plain interpreter; each must stop itself with exit 1 and a reason,
+  // and quickly -- these are the interpreter-side limits, before timeout and
+  // prlimit outside ever get a say.
+  function runRead(fixture) {
+    const started = Date.now()
+    try {
+      const out = execFileSync("lua", [path.join(root, "read.lua"), "-e", fixture], { encoding: "utf8", stdio: "pipe" })
+      return { status: 0, out, err: "", ms: Date.now() - started }
+    } catch (e) {
+      return { status: e.status, out: String(e.stdout || ""), err: String(e.stderr || ""), ms: Date.now() - started }
+    }
+  }
+  const spin = runRead("while true do end")
+  check("an infinite loop is stopped by the instruction budget, with a reason",
+    spin.status === 1 && /ran too long/.test(spin.err), spin.err)
+  check("and stopped in seconds, not minutes", spin.ms < 15000, spin.ms + " ms")
+  const swallow = runRead("while true do pcall(function() while true do end end) end")
+  check("a loop that pcalls the budget error away is stopped all the same",
+    swallow.status === 1 && /ran too long/.test(swallow.err))
+  const flood = runRead('for i = 1, 100000 do hl.gesture({ fingers = 3, direction = "up", action = "close" }) end')
+  check("a flood of gestures is stopped at the record ceiling",
+    flood.status === 1 && /more than 512/.test(flood.err) && flood.out === "", flood.err)
+  const wide = runRead('hl.gesture({ fingers = 3, direction = "up", action = "special", workspace_name = ("x"):rep(5000) })')
+  check("a field past the byte ceiling is refused, not truncated",
+    wide.status === 1 && /longer than 4096/.test(wide.err))
+  const hog = runRead('local t = {} for i = 1, 10000000 do t[i] = ("x"):rep(100) end')
+  check("runaway allocation is stopped by the memory budget",
+    hog.status === 1 && /more than 64 MB/.test(hog.err), hog.err)
+  const fine = runRead('for i = 1, 500 do hl.gesture({ fingers = 3, direction = "up", action = "close" }) end')
+  check("five hundred gestures are still read", fine.status === 0 && Lua.parseHarness(fine.out).gestures.length === 500)
 
   // A workspace name is free text from a text field. Render a hostile one, run
   // the result through Lua for real, and confirm it comes back as inert data:

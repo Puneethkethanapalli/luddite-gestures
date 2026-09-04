@@ -37,14 +37,43 @@
 
 local out = {}
 
+-- What a read may cost. A config is one person's touchpad settings; anything
+-- past these is not a config, it is a loop or a flood, and the honest answer
+-- is to stop and say so rather than hand the panel a list it cannot hold.
+-- The wall clock, the CPU clock and the address space are bounded again from
+-- outside by timeout and prlimit in Panel.qml; these are the limits the
+-- interpreter can see coming.
+local MAX_RECORDS = 512          -- gestures plus tunables
+local MAX_FIELD = 4096           -- bytes in any one field
+local MAX_OUTPUT = 256 * 1024    -- bytes of output in total
+local MAX_INSTRUCTIONS = 50e6    -- Lua VM instructions for the whole chunk
+local MAX_MEMORY_KB = 64 * 1024  -- what collectgarbage("count") may reach
+
+-- Stopping is an os.exit, not an error: an error could be caught by a pcall in
+-- the config and the loop resumed, and os is a name the config cannot reach.
+local function fail(message)
+  io.stderr:write(message)
+  os.exit(1)
+end
+
+local outputBytes = 0
+
 local function clean(s)
   return (tostring(s):gsub("\t", " "):gsub("\n", " "))
 end
 
 local function emit(...)
+  if #out >= MAX_RECORDS then fail("input.lua registers more than " .. MAX_RECORDS .. " gestures and settings") end
   local parts = {}
-  for i, v in ipairs({ ... }) do parts[i] = clean(v) end
-  out[#out + 1] = table.concat(parts, "\t")
+  for i, v in ipairs({ ... }) do
+    local text = clean(v)
+    if #text > MAX_FIELD then fail("input.lua has a field longer than " .. MAX_FIELD .. " bytes") end
+    parts[i] = text
+  end
+  local line = table.concat(parts, "\t")
+  outputBytes = outputBytes + #line + 1
+  if outputBytes > MAX_OUTPUT then fail("input.lua produces more than " .. MAX_OUTPUT .. " bytes of settings") end
+  out[#out + 1] = line
 end
 
 -- Personal config reaches for helpers this harness has no reason to implement
@@ -187,7 +216,21 @@ end
 -- printed, so the caller reads the exit status alone.
 if checkOnly then os.exit(0) end
 
+-- The run itself is metered. Every thousand VM instructions the hook checks the
+-- instruction and memory budgets and stops the process outright on a breach --
+-- os.exit, for the reason fail() gives. The config has no `debug`, so it cannot
+-- take the hook off, and no `coroutine`, so there is no other thread for it to
+-- run on. A single huge allocation can still land between two hook calls;
+-- prlimit's address-space ceiling is what catches that one.
+local instructions = 0
+debug.sethook(function()
+  instructions = instructions + 1000
+  if instructions > MAX_INSTRUCTIONS then fail("input.lua ran too long to read") end
+  if collectgarbage("count") > MAX_MEMORY_KB then fail("input.lua used more than " .. (MAX_MEMORY_KB // 1024) .. " MB while being read") end
+end, "", 1000)
+
 local ok, runErr = pcall(chunk)
+debug.sethook()
 if not ok then
   io.stderr:write(tostring(runErr))
   os.exit(1)

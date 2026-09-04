@@ -269,8 +269,17 @@ function applyBlock(text, body) {
 
 // ------------------------------------------------------------------- parsing
 
+// What parseHarness will retain, whatever arrives on the pipe. read.lua stops
+// itself well inside these, so reaching one here means the reader was not the
+// one that produced the text; the result is then a refusal, not a partial list.
+var MAX_OUTPUT_BYTES = 256 * 1024
+var MAX_RECORDS = 512
+var MAX_FIELD_BYTES = 4096
+
 // read.lua runs a chunk against recording stubs and prints one tab-separated
 // record per line. Turning that into state is a split, not a parser.
+//
+// `overflow` is set, and nothing retained, when the output is past the ceiling.
 //
 //   g  <fingers>  <direction>  <action>  <mode>  <mods>  <workspace_name>  <custom>
 //      <scale>  <zoom_level>  <disable_inhibit>
@@ -280,11 +289,18 @@ function applyBlock(text, body) {
 // The last three arrived after the first release and are read defensively, so
 // output from an older read.lua still parses into a usable gesture.
 function parseHarness(stdout) {
-  var result = { gestures: [], tunables: {} }
-  var lines = String(stdout || "").split("\n")
+  var result = { gestures: [], tunables: {}, overflow: false }
+  var text = String(stdout || "")
+  if (text.length > MAX_OUTPUT_BYTES) return { gestures: [], tunables: {}, overflow: true }
+  var lines = text.split("\n")
+  var records = 0
 
   for (var i = 0; i < lines.length; i++) {
     var f = lines[i].split("\t")
+    if (f[0] !== "g" && f[0] !== "c") continue
+    if (++records > MAX_RECORDS) return { gestures: [], tunables: {}, overflow: true }
+    for (var k = 0; k < f.length; k++)
+      if (f[k].length > MAX_FIELD_BYTES) return { gestures: [], tunables: {}, overflow: true }
     if (f[0] === "g" && f.length >= 8) {
       result.gestures.push({
         fingers: Number(f[1]) || 0,

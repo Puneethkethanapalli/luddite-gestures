@@ -197,7 +197,21 @@ implicit directory import that nobody needs to answer.
 8. **There is no live preview, on purpose.** Hyprland offers no way to
    unregister a gesture, so evaluating a draft would stack it on top of the real
    ones instead of replacing them, and the preview would lie.
-9. **Nothing the panel starts inherits the shell's environment or resolves a
+9. **Every reader is bounded, from outside and from inside.** Outside:
+   `timeout -k 1 5` (wall clock, TERM then KILL across the process group,
+   reaped) and `prlimit --as=256M --cpu=5`. Inside: `read.lua` meters VM
+   instructions and memory with a `debug.sethook` the config cannot remove, and
+   caps records, field bytes and output bytes; a breach is an `os.exit(1)` with
+   a reason, which a `pcall` in the config cannot catch. `parseHarness` refuses
+   output past the same ceilings rather than keeping part of it. A read that
+   fails or is stopped publishes nothing and blocks Save -- an empty list
+   standing in for an unreadable file is exactly what would rewrite the block
+   to nothing. Readers are stopped before a new read starts and on component
+   destruction. Measured: a `while true do end` stops in about a second on the
+   instruction budget; a loop that `pcall`s the budget away stops the same way;
+   the 513th gesture, a 4097-byte field, and a 64 MB allocation each stop with
+   their own message. The second marketplace review asked for all of this.
+10. **Nothing the panel starts inherits the shell's environment or resolves a
    name on PATH.** Every binary is named by absolute path, every process gets
    `clearEnvironment` and an explicit PATH of `/usr/bin:/bin`, and the two
    launcher-entry scripts in `Service.qml` run under `env -i` and `timeout`,
@@ -251,7 +265,7 @@ the site.
 ## Testing
 
 ```bash
-node test/run.js          # 199 checks; no compositor needed
+node test/run.js          # 219 checks; no compositor needed
 omarchy plugin validate . # what the shell enforces at install
 ```
 
