@@ -100,6 +100,10 @@ Item {
       double: !!g.double, double_within_ms: Number(g.double_within_ms) || 0,
       double_min_distance: Number(g.double_min_distance) || 0,
       double_hint: g.double_hint || "",
+      // Read off a dispatcher gesture and written straight back into the file.
+      // Leaving it out here is how a `focus({ direction = "l" })` came back
+      // from a reopen as a bare `focus()`, and was saved that way next time.
+      dispatch_args: g.dispatch_args || "",
       managed: managed, sourceIndex: sourceIndex
     }
   }
@@ -220,7 +224,7 @@ Item {
                 mode: "", mods: "", workspace_name: "", scale: 0, zoom_level: "",
                 disable_inhibit: false, custom: false,
                 double: false, double_within_ms: 0, double_min_distance: 0,
-                double_hint: "" })
+                double_hint: "", dispatch_args: "" })
     root.gestures = next
     root.statusText = ""
   }
@@ -665,7 +669,6 @@ Item {
                 }
 
                 NumberField {
-                  id: numberField
                   visible: modelData.type !== "bool"
                   Layout.preferredWidth: Style.spacing.numberFieldWidth
                   Layout.minimumWidth: Style.spacing.numberFieldWidth
@@ -676,7 +679,7 @@ Item {
                   foreground: root.foreground
                   accent: root.accent
                   fontFamily: root.fontFamily
-                  onModified: root.setTunable(modelData.key, numberField.value)
+                  onModified: function (v) { root.setTunable(modelData.key, v) }
                 }
               }
             }

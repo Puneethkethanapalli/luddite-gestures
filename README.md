@@ -3,12 +3,32 @@
 A panel for editing Hyprland touchpad gestures on [Omarchy](https://omarchy.org/),
 and for telling you which of your swipes will never fire.
 
-![The Luddite Gestures panel](screenshot.png)
+![The Luddite Gestures panel](preview.png)
 
 Hyprland's gesture engine has been good since 0.51. The configuration for it is
 a Lua file, which is fine until you have five gestures and cannot remember
 whether a three-finger `horizontal` swipe has quietly eaten the `left` one you
 added last week. It has. This tells you before you save.
+
+## How it differs
+
+There are other ways to get gestures onto an Omarchy touchpad, and most of them
+keep their own copy of your settings and generate a Lua file from it. This one
+edits the file Hyprland already reads, and keeps nothing else:
+
+- **It reads before it writes.** Every `hl.gesture` in `input.lua` is shown,
+  including the ones you wrote by hand and the ones another tool generated. A
+  gesture the panel did not write is listed, counted for conflicts, and never
+  touched.
+- **It says what will not fire.** Hyprland registers gestures in file order and
+  silently drops a later one whose reach an earlier one already covers. You see
+  that while editing, not after a reload.
+- **It owns one fenced block.** Nothing outside the fences is rewritten, a save
+  with no edits is byte-identical, and removing the plugin leaves your gestures
+  in place as plain Lua. There is no generated file to clean up and no backup to
+  restore.
+- **It offers what a keybind can do.** The nine gesture actions Hyprland has, and
+  every dispatcher, with a compile check before any of it reaches the file.
 
 ## Install
 
@@ -16,10 +36,40 @@ added last week. It has. This tells you before you save.
 omarchy plugin add https://github.com/TechLuddite/luddite-gestures.git --enable --yes
 ```
 
-Open it from **SUPER+SPACE › Luddite Gestures**. No network access, no sudo.
+It puts one touchpad icon in the right section of the bar. Click it to open the
+panel, or open it from **SUPER+SPACE › Luddite Gestures**. No network access,
+no sudo.
+
+![The icon in the bar, right after the tray](docs/bar.png)
+
+The icon is where the shell keeps a widget plugin's on switch: `omarchy plugin
+disable io.github.techluddite.gestures` takes it off the bar and stops the
+plugin, and `enable` puts it back. To have it elsewhere:
+
+```bash
+omarchy plugin enable io.github.techluddite.gestures --section left
+```
 
 To remove it, `omarchy plugin remove io.github.techluddite.gestures --yes`. Your
 gestures stay — they are plain Lua in the file Hyprland already reads.
+
+### Upgrading from 0.1
+
+The first release had no bar icon, so an existing install is recorded in
+`shell.json` as a plain plugin rather than as a widget, and the shell cannot move
+that entry into the bar — `enable --section right` reports success and changes
+nothing. Disable, then enable, and restart the shell so it sees the new file:
+
+```bash
+omarchy plugin update io.github.techluddite.gestures --yes
+omarchy plugin disable io.github.techluddite.gestures
+omarchy plugin enable io.github.techluddite.gestures --section right
+omarchy restart shell
+```
+
+The restart is not optional. A running shell only lists a plugin's directory
+once; a file that was not there at that first look fails to load with `File name
+case mismatch` or `No such file or directory` until the shell starts again.
 
 ## What it edits
 
@@ -159,7 +209,7 @@ omarchy plugin validate . # the same checks the shell enforces at install
 
 [`CLAUDE.md`](CLAUDE.md) is the working-notes file: how facts about Hyprland get
 measured rather than quoted, what the panel is and is not allowed to touch, and
-the two QML traps that cost real time. Read it before changing how the block is
+the QML traps that cost real time. Read it before changing how the block is
 written.
 
 Saving a file under `~/.config/omarchy/plugins/` hot-reloads plugin code, but it

@@ -649,6 +649,65 @@ for (const [what, pattern, count] of SELF_ASSIGNING) {
     `expected ${count}, found ${(rowSrc.match(pattern) || []).length}`)
 }
 
+// NumberField is the opposite trap. Its `value` is only ever the binding the
+// caller gave it: the spinbox inside changes, `value` does not. So a handler
+// that reads `<id>.value` gets the number from BEFORE the click -- measured in
+// a live Quickshell: one press on the up arrow, signal argument 4, `value` still
+// 3. That is how a 4-finger gesture kept warning about a 3-finger one, and
+// would have been saved with three fingers. The number arrives as the signal's
+// argument, and that is the only place a handler may read it from.
+const NUMBER_HANDLERS = [["GestureRow.qml", rowSrc, 4], ["Panel.qml", panelQml, 1]]
+for (const [file, src, count] of NUMBER_HANDLERS) {
+  const handlers = src.match(/onModified:.*$/mg) || []
+  check(`${file} has the NumberField handlers it is known to have`,
+    handlers.length === count, `expected ${count}, found ${handlers.length}`)
+  check(`no NumberField handler in ${file} reads the control's own value`,
+    handlers.every(h => !/\b\w+\.value\b/.test(h)), handlers.join(" | "))
+  check(`every NumberField handler in ${file} takes the number as its argument`,
+    handlers.every(h => /onModified:\s*function\s*\(\w+\)/.test(h)), handlers.join(" | "))
+}
+
+// Panel.tag() is the copy every gesture passes through on its way in from the
+// file. A field it does not name is dropped there, silently, and written back
+// missing on the next save -- which is how a dispatcher's argument text went
+// from `focus({ direction = "l" })` to `focus()` after one reopen. Everything
+// the renderer can write has to be carried.
+const tagBody = panelQml.slice(panelQml.indexOf("function tag("), panelQml.indexOf("function copyGesture"))
+const CARRIED = ["fingers", "direction", "action", "mods", "custom", "disable_inhibit", "double"]
+  .concat(Schema.FIELD_NAMES, Schema.DOUBLE_FIELDS)
+for (const name of CARRIED)
+  check(`Panel.tag() carries ${name}`, new RegExp("\\b" + name + ":").test(tagBody))
+
+// ---------------------------------------------------------------------------
+// The bar icon is a third kind in the manifest. The shell routes toggle for a
+// plugin that is both a widget and a panel to the panel loader, so the widget
+// must stay a thin shim over shell.toggle -- and the marketplace picks up a
+// root preview.png, not a screenshot under any other name.
+console.log("\nbar icon and listing")
+
+const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"))
+const iconSrc = fs.readFileSync(path.join(root, manifest.entryPoints.barWidget || "BarIcon.qml"), "utf8")
+const readme = fs.readFileSync(path.join(root, "README.md"), "utf8")
+
+check("the manifest declares panel, service and bar-widget",
+  ["panel", "service", "bar-widget"].every(k => manifest.kinds.indexOf(k) !== -1))
+check("the bar-widget entry point exists",
+  fs.existsSync(path.join(root, String(manifest.entryPoints.barWidget))))
+check("the widget defaults to the right section, where the neighbours put theirs",
+  manifest.barWidget && manifest.barWidget.defaultSection === "right")
+check("the widget names the plugin id as its moduleName",
+  iconSrc.indexOf('moduleName: "' + manifest.id + '"') !== -1)
+check("the widget toggles through the shell rather than owning a window",
+  /bar\.shell\.toggle\(root\.moduleName\)/.test(iconSrc) && !/PanelWindow|Loader/.test(iconSrc))
+check("the widget file does not share a name with the type it extends",
+  path.basename(String(manifest.entryPoints.barWidget)) !== "BarWidget.qml")
+check("the marketplace preview is a root preview.png",
+  fs.existsSync(path.join(root, "preview.png")))
+check("the README shows preview.png, not a file the marketplace will not find",
+  readme.indexOf("(preview.png)") !== -1 && readme.indexOf("screenshot.png") === -1)
+check("the README shows the icon in the bar",
+  readme.indexOf("(docs/bar.png)") !== -1 && fs.existsSync(path.join(root, "docs", "bar.png")))
+
 // ---------------------------------------------------------------------------
 console.log("\nread.lua harness (integration)")
 
