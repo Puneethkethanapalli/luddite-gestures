@@ -679,6 +679,36 @@ for (const name of CARRIED)
   check(`Panel.tag() carries ${name}`, new RegExp("\\b" + name + ":").test(tagBody))
 
 // ---------------------------------------------------------------------------
+// The bar icon is a third kind in the manifest. The shell routes toggle for a
+// plugin that is both a widget and a panel to the panel loader, so the widget
+// must stay a thin shim over shell.toggle -- and the marketplace picks up a
+// root preview.png, not a screenshot under any other name.
+console.log("\nbar icon and listing")
+
+const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"))
+const iconSrc = fs.readFileSync(path.join(root, manifest.entryPoints.barWidget || "BarIcon.qml"), "utf8")
+const readme = fs.readFileSync(path.join(root, "README.md"), "utf8")
+
+check("the manifest declares panel, service and bar-widget",
+  ["panel", "service", "bar-widget"].every(k => manifest.kinds.indexOf(k) !== -1))
+check("the bar-widget entry point exists",
+  fs.existsSync(path.join(root, String(manifest.entryPoints.barWidget))))
+check("the widget defaults to the right section, where the neighbours put theirs",
+  manifest.barWidget && manifest.barWidget.defaultSection === "right")
+check("the widget names the plugin id as its moduleName",
+  iconSrc.indexOf('moduleName: "' + manifest.id + '"') !== -1)
+check("the widget toggles through the shell rather than owning a window",
+  /bar\.shell\.toggle\(root\.moduleName\)/.test(iconSrc) && !/PanelWindow|Loader/.test(iconSrc))
+check("the widget file does not share a name with the type it extends",
+  path.basename(String(manifest.entryPoints.barWidget)) !== "BarWidget.qml")
+check("the marketplace preview is a root preview.png",
+  fs.existsSync(path.join(root, "preview.png")))
+check("the README shows preview.png, not a file the marketplace will not find",
+  readme.indexOf("(preview.png)") !== -1 && readme.indexOf("screenshot.png") === -1)
+check("the README shows the icon in the bar",
+  readme.indexOf("(docs/bar.png)") !== -1 && fs.existsSync(path.join(root, "docs", "bar.png")))
+
+// ---------------------------------------------------------------------------
 console.log("\nread.lua harness (integration)")
 
 let lua = true

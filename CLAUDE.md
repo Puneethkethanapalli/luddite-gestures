@@ -65,6 +65,7 @@ leaves alone.
 | `LuaGestures.js` | Renders the block, splices it into the file, parses `read.lua` output, finds conflicts and field errors. No I/O |
 | `read.lua` | Runs a config segment against recording stubs and prints what it set |
 | `Panel.qml` | State, the three-segment read, save, the UI |
+| `BarIcon.qml` | The bar widget: one icon that asks the shell to toggle the panel. Owns nothing else |
 | `GestureRow.qml` | One gesture, on two lines |
 | `Service.qml` | Installs/removes the launcher desktop entry |
 
@@ -113,6 +114,38 @@ silently empty someone's gesture list.
 The helper never names a dispatcher itself: it calls `s.run()`, a thunk the
 renderer wrote. One place a wrong call can come from, and it is the one the
 panel controls.
+
+## The bar icon
+
+The manifest declares three kinds: `panel`, `service`, `bar-widget`. The shell
+routes `summon`/`toggle` for a plugin that is *both* a widget and a panel to the
+panel loader, not to the widget, so `BarIcon.qml` has no `open()` of its own: it
+calls `bar.shell.toggle(id)` and that is the whole of it.
+
+Two consequences of the `bar-widget` kind, both the shell's rules rather than
+ours:
+
+- **The bar entry is the on switch.** A third-party plugin is enabled when
+  `shell.json` has an entry for it, and for a widget that entry lives in the bar
+  layout. Taking the icon off the bar disables the panel and the service too.
+- **An install from 0.1 cannot be moved into the bar.** It sits in `plugins[]`,
+  and `enable --section right` on an entry that already exists says "Enabled and
+  moved" and changes nothing (measured). Disable, then enable. The README says
+  so.
+
+**A running shell cannot load a file that was not in the plugin directory when
+it first looked.** Measured against Quickshell 0.3.1: every new file added to
+an installed plugin failed with `File name case mismatch`, or `No such file or
+directory` for a file that was on disk, through a dozen rescans and the shell's
+own `Qt.clearComponentCache()`; a shell restart loaded the same file at once.
+Hot reload covers edits to files the shell has seen, not additions. This is
+why the upgrade notes say `omarchy restart shell`, and why a new `.qml` file
+here needs one before you conclude it is broken.
+
+The widget file is not called `BarWidget.qml`. It could be — the shell's own
+clock uses that name — but it extends the `BarWidget` type from `qs.Ui`, and a
+file that shares a name with the type it extends is a question about QML's
+implicit directory import that nobody needs to answer.
 
 ## Hard rules
 
@@ -189,7 +222,7 @@ the site.
 ## Testing
 
 ```bash
-node test/run.js          # 175 checks; no compositor needed
+node test/run.js          # 184 checks; no compositor needed
 omarchy plugin validate . # what the shell enforces at install
 ```
 
