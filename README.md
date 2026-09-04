@@ -10,6 +10,26 @@ a Lua file, which is fine until you have five gestures and cannot remember
 whether a three-finger `horizontal` swipe has quietly eaten the `left` one you
 added last week. It has. This tells you before you save.
 
+## How it differs
+
+There are other ways to get gestures onto an Omarchy touchpad, and most of them
+keep their own copy of your settings and generate a Lua file from it. This one
+edits the file Hyprland already reads, and keeps nothing else:
+
+- **It reads before it writes.** Every `hl.gesture` in `input.lua` is shown,
+  including the ones you wrote by hand and the ones another tool generated. A
+  gesture the panel did not write is listed, counted for conflicts, and never
+  touched.
+- **It says what will not fire.** Hyprland registers gestures in file order and
+  silently drops a later one whose reach an earlier one already covers. You see
+  that while editing, not after a reload.
+- **It owns one fenced block.** Nothing outside the fences is rewritten, a save
+  with no edits is byte-identical, and removing the plugin leaves your gestures
+  in place as plain Lua. There is no generated file to clean up and no backup to
+  restore.
+- **It offers what a keybind can do.** The nine gesture actions Hyprland has, and
+  every dispatcher, with a compile check before any of it reaches the file.
+
 ## Install
 
 ```bash
