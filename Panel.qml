@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
-import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
 import "Schema.js" as Schema
@@ -19,19 +18,24 @@ import "LuaGestures.js" as Lua
 // evaluating a draft would stack it on top of the real ones rather than replace
 // them. Saving writes the file and reloads, which is the only honest preview a
 // gesture has anyway — you have to put fingers on the touchpad to feel it.
-Item {
+//
+// This is the popup behind the bar icon, built the way the shell's own bar
+// widgets build theirs: BarIcon.qml loads it and hands it the bar and the icon
+// to anchor under, and KeyboardPanel below draws the card with the popup
+// colours every other icon's card uses. `opened` comes from the Panel base.
+Panel {
   id: root
+  moduleName: "io.github.techluddite.gestures"
+  manageIpc: false
 
-  property string omarchyPath: Quickshell.env("OMARCHY_PATH")
-  property var shell: null
-  property var manifest: null
+  property var anchorItem: null
+  property var hostWidget: null
 
   readonly property string home: Quickshell.env("HOME")
-  readonly property string pluginDir: (manifest && manifest.__sourceDir)
-    || (home + "/.config/omarchy/plugins/io.github.techluddite.gestures")
+  // Where read.lua lives: next to this file, wherever the plugin was installed.
+  readonly property string pluginDir:
+    String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "").replace(/\/$/, "")
   readonly property string inputPath: home + "/.config/hypr/input.lua"
-
-  property bool opened: false
 
   // What the panel manages.
   property var gestures: []
@@ -61,12 +65,11 @@ Item {
   property bool selfWrite: false
   property bool readFailed: false
 
-  property color background: Color.menu.background
-  property color foreground: Color.menu.text
-  property color accent: Color.accent
-  property color urgent: Color.urgent
-  property color scrim: Color.menu.scrim
-  property string fontFamily: Style.font.menuFamily
+  // The bar's colours and font, as every popup under the bar uses them.
+  readonly property color foreground: bar ? bar.foreground : Color.popups.text
+  readonly property color accent: Color.accent
+  readonly property color urgent: bar ? bar.urgent : Color.urgent
+  readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   readonly property bool dirty:
     JSON.stringify(gestures) !== JSON.stringify(savedGestures)
@@ -112,9 +115,10 @@ Item {
 
   // --------------------------------------------------------------- lifecycle
 
-  function open() { opened = true; inputFile.reload() }
-  function dismiss() { opened = false; statusText = "" }
-  function toggle() { opened ? dismiss() : open() }
+  // open/close/toggle come from the Panel base. Re-read on every open so the
+  // panel shows the file as it is now, not as it was last time.
+  onOpenedChanged: { if (opened) inputFile.reload(); else statusText = "" }
+  function dismiss() { close() }
 
   // ------------------------------------------------------------------ reading
 
@@ -390,56 +394,42 @@ Item {
 
   // -------------------------------------------------------------------- UI
 
-  PanelWindow {
-    id: window
-    visible: root.opened
-    anchors { top: true; bottom: true; left: true; right: true }
-    color: "transparent"
-    exclusionMode: ExclusionMode.Ignore
-    WlrLayershell.namespace: "luddite-gestures"
-    WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+  // The card under the icon. KeyboardPanel owns placement (under the anchor,
+  // clamped to the screen), the popup colours and border, outside-click
+  // dismissal and keyboard focus; this only says how big it wants to be.
+  KeyboardPanel {
+    id: panel
+    anchorItem: root.anchorItem
+    owner: root.hostWidget || root
+    bar: root.bar
+    open: root.opened
+    focusTarget: keys
+    contentWidth: panel.fittedContentWidth(Style.space(980))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(680))
 
-    Rectangle {
+    // Not a PanelKeyCatcher: that takes j/k/h/l/space/x before any child sees
+    // them, which is the wrong thing for a card full of text fields. Keys the
+    // fields do not handle bubble up here instead.
+    Item {
+      id: keys
       anchors.fill: parent
-      color: root.scrim
-      MouseArea { anchors.fill: parent; onClicked: root.dismiss() }
-    }
-
-    BorderSurface {
-      id: card
-      anchors.centerIn: parent
-      width: Math.min(Style.space(980), window.width - Style.gapsOut * 4)
-      height: Math.min(Style.space(680), window.height - Style.gapsOut * 4)
-      radius: Style.cornerRadius
-      color: root.background
-      borderSpec: Border.surfaceSpec("menu", "border", Color.menu.border, Math.max(1, Style.space(2)))
-      padding: Style.spacing.panelPadding
-
-      MouseArea { anchors.fill: parent; onClicked: {} }
-
-      Item {
-        anchors.fill: parent
-        focus: true
-        Keys.onPressed: function (event) {
-          if (event.key === Qt.Key_Escape) { root.dismiss(); event.accepted = true }
-          else if (event.key === Qt.Key_S && (event.modifiers & Qt.ControlModifier)) {
-            root.save(); event.accepted = true
-          }
+      focus: true
+      Keys.onPressed: function (event) {
+        if (event.key === Qt.Key_Escape) { root.dismiss(); event.accepted = true }
+        else if (event.key === Qt.Key_S && (event.modifiers & Qt.ControlModifier)) {
+          root.save(); event.accepted = true
         }
       }
 
       ColumnLayout {
+        id: column
         anchors.fill: parent
-        anchors.topMargin: card.contentTopInset
-        anchors.rightMargin: card.contentRightInset
-        anchors.bottomMargin: card.contentBottomInset
-        anchors.leftMargin: card.contentLeftInset
         spacing: Style.spacing.md
 
         // ---- header
         RowLayout {
           Layout.fillWidth: true
+          Layout.minimumHeight: implicitHeight
           spacing: Style.spacing.sm
 
           ColumnLayout {
@@ -476,6 +466,10 @@ Item {
         Flickable {
           Layout.fillWidth: true
           Layout.fillHeight: true
+          // Asks for its full height so the card grows to fit a short list,
+          // and gives way first when the cap bites.
+          implicitHeight: body.implicitHeight
+          Layout.minimumHeight: Style.space(120)
           contentWidth: width
           contentHeight: body.implicitHeight
           clip: true
@@ -691,6 +685,7 @@ Item {
         // ---- footer
         RowLayout {
           Layout.fillWidth: true
+          Layout.minimumHeight: implicitHeight
           spacing: Style.spacing.sm
 
           Text {
@@ -730,10 +725,7 @@ Item {
     }
   }
 
-  IpcHandler {
-    target: "luddite-gestures"
-    function open(): void { root.open() }
-    function close(): void { root.dismiss() }
-    function toggle(): void { root.toggle() }
-  }
+  // No IpcHandler of its own: `omarchy-shell shell toggle io.github.techluddite.gestures`
+  // reaches this through the bar, and a handler here would register once per
+  // monitor and warn about itself on the second one.
 }

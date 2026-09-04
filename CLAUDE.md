@@ -64,8 +64,8 @@ leaves alone.
 | `Schema.js` | What Hyprland accepts. Directions, coverage, actions, dispatchers, field specs, validation helpers. No I/O |
 | `LuaGestures.js` | Renders the block, splices it into the file, parses `read.lua` output, finds conflicts and field errors. No I/O |
 | `read.lua` | Runs a config segment against recording stubs and prints what it set |
-| `Panel.qml` | State, the three-segment read, save, the UI |
-| `BarIcon.qml` | The bar widget: one icon that asks the shell to toggle the panel. Owns nothing else |
+| `Panel.qml` | State, the three-segment read, save, the UI. A `Panel` from `qs.Ui`, drawn in a `KeyboardPanel` under the icon |
+| `BarIcon.qml` | The manifest entry point: one icon, a Loader for `Panel.qml`, and the open/close/toggle the shell calls |
 | `GestureRow.qml` | One gesture, on two lines |
 | `Service.qml` | Installs/removes the launcher desktop entry |
 
@@ -117,10 +117,23 @@ panel controls.
 
 ## The bar icon
 
-The manifest declares three kinds: `panel`, `service`, `bar-widget`. The shell
-routes `summon`/`toggle` for a plugin that is *both* a widget and a panel to the
-panel loader, not to the widget, so `BarIcon.qml` has no `open()` of its own: it
-calls `bar.shell.toggle(id)` and that is the whole of it.
+The manifest declares two kinds: `service` and `bar-widget`. The panel is the
+icon's popup, built the way the shell's own clock builds its: `BarIcon.qml` is
+the entry point, it loads `Panel.qml`, and it forwards `open`/`close`/`toggle`.
+`Panel.qml` is a `Panel` from `qs.Ui` drawn in a `KeyboardPanel`, which is what
+puts it under the icon with the popup background and border every other
+icon's card has. There is deliberately **no `panel` kind**: the shell routes
+`summon`/`toggle` for a plugin that is both a widget and a panel to its panel
+loader, and the popup is not there. `omarchy-shell shell toggle <id>` and the
+launcher entry reach the widget through the bar.
+
+The card is sized `fittedContentWidth(980)` by `fittedContentHeight(column,
+680)`, so it grows to a short list and is capped by the screen. The Flickable
+asks for its full height and is the only thing that gives way when the cap
+bites; header and footer pin their `Layout.minimumHeight`.
+
+`read.lua` is found with `Qt.resolvedUrl(".")`, next to the file, because a bar
+widget is not handed a manifest the way a panel-kind plugin was.
 
 Two consequences of the `bar-widget` kind, both the shell's rules rather than
 ours:
@@ -222,7 +235,7 @@ the site.
 ## Testing
 
 ```bash
-node test/run.js          # 184 checks; no compositor needed
+node test/run.js          # 187 checks; no compositor needed
 omarchy plugin validate . # what the shell enforces at install
 ```
 
@@ -243,9 +256,10 @@ Saving a file under `~/.config/omarchy/plugins/` hot-reloads plugin code but doe
 **not** re-instantiate a panel the shell has already created. A layout change
 looks like it did nothing until `omarchy restart shell`.
 
-Panel plugins load lazily — `shell.qml` only activates the Loader when the panel
-is opened — so `luddite-gestures` missing from `quickshell ipc show` is normal
-until you open it once. It is not a regression.
+The popup has no IPC target of its own — a handler in a bar widget registers
+once per monitor and warns about itself on the second one — so `luddite-gestures`
+missing from `quickshell ipc show` is expected. `omarchy-shell shell toggle
+io.github.techluddite.gestures` is the way in from a keybind.
 
 The shell's own components live in `/usr/share/omarchy/shell/{Commons,Ui}`. Read
 them rather than guessing at their API; `qmllint -I <dir-containing-qs>` will

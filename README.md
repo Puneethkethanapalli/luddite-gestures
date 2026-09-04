@@ -36,9 +36,9 @@ edits the file Hyprland already reads, and keeps nothing else:
 omarchy plugin add https://github.com/TechLuddite/luddite-gestures.git --enable --yes
 ```
 
-It puts one touchpad icon in the right section of the bar. Click it to open the
-panel, or open it from **SUPER+SPACE › Luddite Gestures**. No network access,
-no sudo.
+It puts one touchpad icon in the right section of the bar. Click it and the
+panel opens under it, like every other icon's popup. Or open it from
+**SUPER+SPACE › Luddite Gestures**. No network access, no sudo.
 
 ![The icon in the bar, right after the tray](docs/bar.png)
 
