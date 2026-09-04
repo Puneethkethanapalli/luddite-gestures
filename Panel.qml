@@ -101,7 +101,9 @@ Panel {
   readonly property var conflicts: Lua.findConflicts(ordered, Schema)
   readonly property var fieldErrors: Lua.findFieldErrors(gestures, Schema)
   readonly property var unmanaged: unmanagedBefore.concat(unmanagedAfter)
-  readonly property bool blocked: fieldErrors.length > 0
+  // A file that could not be read is not one to write: the block would be
+  // rebuilt from whatever the panel had, which after a failed read is nothing.
+  readonly property bool blocked: fieldErrors.length > 0 || readFailed
 
   function tag(g, managed, sourceIndex) {
     return {
@@ -133,29 +135,130 @@ Panel {
 
   // ------------------------------------------------------------------ reading
 
-  // input.lua is read in three pieces so the block's position in the file — and
-  // therefore which gestures Hyprland registers first — survives the round trip.
-  function readFile(text) {
-    var split = Lua.splitBlock(text)
-    root.readFailed = false
-    root.pendingRead = { before: null, body: null, after: null }
-    beforeReader.command = ["/usr/bin/lua", pluginDir + "/read.lua", "-e", split.before]
-    beforeReader.running = true
-    afterReader.command = ["/usr/bin/lua", pluginDir + "/read.lua", "-e", split.after]
-    afterReader.running = true
-    bodyReader.command = ["/usr/bin/lua", pluginDir + "/read.lua", "-e", split.found ? split.body : ""]
-    bodyReader.running = true
+  // Every reader and the compile check run inside the same fence:
+  //
+  //   timeout -k 1 <s>   a wall-clock deadline. timeout puts the command in its
+  //                      own process group and signals the whole group, TERM
+  //                      first and KILL one second later, on expiry and when it
+  //                      is itself told to stop -- which is what `running =
+  //                      false` does. It reaps the child before it exits, and
+  //                      the shell reaps it.
+  //   prlimit --as/--cpu an address-space ceiling and a CPU-time ceiling on the
+  //                      interpreter, for the allocation or spin that gets
+  //                      between two of read.lua's own budget checks.
+  //
+  // read.lua adds the limits an interpreter can see coming: instructions,
+  // memory, records, field bytes, output bytes. Measured: an infinite loop is
+  // stopped in well under a second by the instruction budget, a flood of
+  // gestures at the 513th, and a runaway allocation by prlimit.
+  readonly property int readerSeconds: 5
+  readonly property int readerMemoryBytes: 256 * 1024 * 1024
+  function fenced(seconds, command) {
+    return ["/usr/bin/timeout", "-k", "1", String(seconds),
+            "/usr/bin/prlimit", "--as=" + readerMemoryBytes, "--cpu=" + seconds]
+      .concat(command)
+  }
+  function readerCommand(segment) {
+    return fenced(readerSeconds, ["/usr/bin/lua", pluginDir + "/read.lua", "-e", segment])
   }
 
-  // One segment came back. Publishing early would mean the reader that finished
-  // last silently won, so hold everything until the set is complete.
-  function segmentRead(which, parsed) {
-    if (!root.pendingRead) return
-    root.pendingRead[which] = parsed
+  // A read that is superseded -- the file changed again, the panel reopened --
+  // or that the panel does not live to see is stopped, not left to finish
+  // into nowhere. Stopping a reader sends TERM to its timeout, which takes the
+  // whole group down.
+  // Each read is a generation. Every reader is stamped with the generation that
+  // launched it and reports it back, so a signal from a reader an earlier read
+  // started -- one this read superseded, or one killed on close -- is dropped
+  // rather than written into the current read's slots. Without this, a stopped
+  // reader's own TERM lands as a fresh "reader exited with 15" against the read
+  // that replaced it. Measured, before the guard: superseding a slow read
+  // failed the good one that followed.
+  property int readGeneration: 0
+  property var liveReaders: []
+
+  // Stop and let go of every reader still running. Killing a Process object
+  // signals its child; dropping the reference lets it be collected once its
+  // own onExited has fired. A later generation ignores whatever they still say.
+  function stopReaders() {
+    var readers = root.liveReaders
+    root.liveReaders = []
+    for (var i = 0; i < readers.length; i++)
+      if (readers[i]) readers[i].running = false
+  }
+  Component.onDestruction: {
+    stopReaders()
+    checkProc.running = false
+    reloadProc.running = false
+    errorsProc.running = false
+  }
+
+  // input.lua is read in three pieces so the block's position in the file — and
+  // therefore which gestures Hyprland registers first — survives the round trip.
+  // Each piece is a fresh reader object, created here and destroyed in its own
+  // onExited, so no two reads ever share one and a late signal has nowhere to
+  // land but its own dead generation.
+  function readFile(text) {
+    var split = Lua.splitBlock(text)
+    stopReaders()
+    // A fresh read retires the last read's error, and only that: an error a
+    // save just reported is for the user to see, not for a file-change event
+    // to wipe.
+    if (root.readFailed) root.errorText = ""
+    root.readFailed = false
+    root.readGeneration += 1
+    root.pendingRead = {
+      generation: root.readGeneration,
+      before: { out: null, code: null }, body: { out: null, code: null }, after: { out: null, code: null }
+    }
+    root.liveReaders = [
+      startReader("before", split.before, root.readGeneration),
+      startReader("body", split.found ? split.body : "", root.readGeneration),
+      startReader("after", split.after, root.readGeneration)
+    ]
+  }
+
+  function startReader(which, segment, generation) {
+    return readerComponent.createObject(root, {
+      which: which, generation: generation, command: readerCommand(segment), running: true
+    })
+  }
+
+  // A segment is complete when its output has ended AND its exit code is in;
+  // the two arrive on different signals, in no fixed order. Nothing is
+  // published until all three segments are complete -- publishing early meant
+  // whichever reader finished last silently won -- and nothing is published at
+  // all if any of them failed or was stopped: an empty list standing in for a
+  // file that could not be read is exactly the state that rewrites the block
+  // to nothing on the next save.
+  function segmentOutput(which, text, generation) { segmentPart(which, "out", String(text || ""), generation) }
+  function segmentExit(which, code, stderrText, generation) {
+    if (generation !== root.readGeneration) return
+    if (code !== 0) {
+      root.readFailed = true
+      var detail = String(stderrText || "").trim()
+      root.errorText = detail !== "" ? "input.lua could not be read: " + detail
+        : code === 124 || code === 137
+          ? "input.lua could not be read: it took more than " + readerSeconds + " s"
+          : "input.lua could not be read (reader exited with " + code + ")"
+    }
+    segmentPart(which, "code", code, generation)
+  }
+  function segmentPart(which, part, value, generation) {
     var p = root.pendingRead
-    if (!p.before || !p.body || !p.after) return
+    if (!p || generation !== p.generation || !p[which]) return
+    p[which][part] = value
+    var names = ["before", "body", "after"]
+    for (var i = 0; i < names.length; i++)
+      if (p[names[i]].out === null || p[names[i]].code === null) return
     root.pendingRead = null
-    adopt(p)
+    if (root.readFailed) return
+    var parsed = { before: Lua.parseHarness(p.before.out), body: Lua.parseHarness(p.body.out), after: Lua.parseHarness(p.after.out) }
+    if (parsed.before.overflow || parsed.body.overflow || parsed.after.overflow) {
+      root.readFailed = true
+      root.errorText = "input.lua could not be read: it produced more settings than the panel will hold"
+      return
+    }
+    adopt(parsed)
   }
 
   function adopt(p) {
@@ -280,7 +383,7 @@ Panel {
     root.errorText = ""
     root.statusText = "Checking…"
     root.pendingBody = Lua.renderBody(gestures, tunables, Schema)
-    checkProc.command = ["/usr/bin/lua", pluginDir + "/read.lua", "--check", "-e", root.pendingBody]
+    checkProc.command = fenced(readerSeconds, ["/usr/bin/lua", pluginDir + "/read.lua", "--check", "-e", root.pendingBody])
     checkProc.running = true
   }
 
@@ -300,50 +403,24 @@ Panel {
 
   // --------------------------------------------------------------- processes
 
-  Process {
-    id: bodyReader
-    clearEnvironment: true
-    environment: root.processEnvironment
-    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.segmentRead("body", Lua.parseHarness(text)) }
-    stderr: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: if (String(text || "").trim() !== "") {
-        root.readFailed = true
-        root.errorText = "Could not read the managed block: " + String(text).trim()
-      }
-    }
-  }
-
-  Process {
-    id: beforeReader
-    clearEnvironment: true
-    environment: root.processEnvironment
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.segmentRead("before", Lua.parseHarness(text))
-    }
-    stderr: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: if (String(text || "").trim() !== "") {
-        root.readFailed = true
-        root.errorText = "input.lua did not parse: " + String(text).trim()
-      }
-    }
-  }
-
-  Process {
-    id: afterReader
-    clearEnvironment: true
-    environment: root.processEnvironment
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.segmentRead("after", Lua.parseHarness(text))
-    }
-    stderr: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: if (String(text || "").trim() !== "") {
-        root.readFailed = true
-        root.errorText = "input.lua did not parse: " + String(text).trim()
+  // One reader, made fresh for each segment of each read. `which` and
+  // `generation` travel with it and come back on both signals, so a reader from
+  // a superseded or closed read is ignored, not mistaken for this one. It
+  // destroys itself once its exit is in -- stdout has already ended by then,
+  // since a process's streams close before it is reaped.
+  Component {
+    id: readerComponent
+    Process {
+      id: reader
+      property string which: ""
+      property int generation: 0
+      clearEnvironment: true
+      environment: root.processEnvironment
+      stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.segmentOutput(reader.which, text, reader.generation) }
+      stderr: StdioCollector { id: readerErr; waitForEnd: true }
+      onExited: function (code) {
+        root.segmentExit(reader.which, code, readerErr.text, reader.generation)
+        reader.destroy()
       }
     }
   }
@@ -362,7 +439,7 @@ Panel {
       root.statusText = ""
       var detail = String(checkProc.stderr.text || "").trim()
       root.errorText = "Not saved — that would not compile: "
-        + (detail !== "" ? detail : "the block is not valid Lua")
+        + (detail !== "" ? detail : code === 124 ? "the check took more than " + readerSeconds + " s" : "the block is not valid Lua")
     }
   }
 
@@ -370,7 +447,7 @@ Panel {
     id: reloadProc
     clearEnvironment: true
     environment: root.processEnvironment
-    command: ["/usr/bin/hyprctl", "reload"]
+    command: ["/usr/bin/timeout", "-k", "1", "10", "/usr/bin/hyprctl", "reload"]
     onExited: errorsProc.running = true
   }
 
@@ -379,7 +456,7 @@ Panel {
     id: errorsProc
     clearEnvironment: true
     environment: root.processEnvironment
-    command: ["/usr/bin/hyprctl", "configerrors"]
+    command: ["/usr/bin/timeout", "-k", "1", "10", "/usr/bin/hyprctl", "configerrors"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {

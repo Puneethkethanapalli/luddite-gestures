@@ -201,6 +201,14 @@ nothing it says can run a command, open a file, or load code. The interpreter
 itself is started with a cleared environment, so a `LUA_INIT` cannot reach it
 either.
 
+It is also bounded. A read gets five seconds, 256 MB, and a budget of
+instructions, gestures, and output, enforced from outside by `timeout` and
+`prlimit` and from inside by the reader itself; an infinite loop, a flood of
+gestures, or a runaway allocation in the file stops the read with a message
+instead of the panel. A file that could not be read shows nothing and cannot be
+saved over, because a blank list standing in for it is what would erase your
+block.
+
 **There is no live preview, on purpose.** Hyprland offers no way to unregister a
 gesture, so evaluating a draft would stack it on top of the real ones instead of
 replacing them, and the preview would lie. Saving writes and reloads, which is
