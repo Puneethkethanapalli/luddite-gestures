@@ -191,8 +191,15 @@ Reading state back is done by Lua, not by a parser. [`read.lua`](read.lua) runs
 each segment of the file against recording stubs for `hl` and `o` and reports
 what it set, so there is no second grammar to keep in sync with Hyprland's, and
 a config that references helpers this plugin has never heard of still reads.
-Chunks are loaded in text mode only, never as bytecode, and every stub only
-records — nothing in your config is executed for its effects.
+
+That run is sealed. The config is loaded in text mode only, never as bytecode,
+into an environment that holds the recorders and the pure parts of the standard
+library and nothing else: no `os`, `io`, `require`, `load`, `dofile`, `debug`
+or `print`. A hand-written `os.getenv("HOME")` resolves to an inert value that
+answers to anything and does nothing, so the file still reads to the end, and
+nothing it says can run a command, open a file, or load code. The interpreter
+itself is started with a cleared environment, so a `LUA_INIT` cannot reach it
+either.
 
 **There is no live preview, on purpose.** Hyprland offers no way to unregister a
 gesture, so evaluating a draft would stack it on top of the real ones instead of

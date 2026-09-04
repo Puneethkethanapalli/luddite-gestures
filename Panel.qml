@@ -37,6 +37,17 @@ Panel {
     String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "").replace(/\/$/, "")
   readonly property string inputPath: home + "/.config/hypr/input.lua"
 
+  // What every process below runs with, in place of the shell's environment:
+  // a PATH of two system directories, and what hyprctl needs to find its
+  // socket. Nothing else -- a LUA_INIT in the inherited environment would run
+  // in the reader before a line of the config did.
+  readonly property var processEnvironment: ({
+    PATH: "/usr/bin:/bin",
+    HOME: home,
+    XDG_RUNTIME_DIR: Quickshell.env("XDG_RUNTIME_DIR"),
+    HYPRLAND_INSTANCE_SIGNATURE: Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")
+  })
+
   // What the panel manages.
   property var gestures: []
   property var tunables: ({})
@@ -128,11 +139,11 @@ Panel {
     var split = Lua.splitBlock(text)
     root.readFailed = false
     root.pendingRead = { before: null, body: null, after: null }
-    beforeReader.command = ["lua", pluginDir + "/read.lua", "-e", split.before]
+    beforeReader.command = ["/usr/bin/lua", pluginDir + "/read.lua", "-e", split.before]
     beforeReader.running = true
-    afterReader.command = ["lua", pluginDir + "/read.lua", "-e", split.after]
+    afterReader.command = ["/usr/bin/lua", pluginDir + "/read.lua", "-e", split.after]
     afterReader.running = true
-    bodyReader.command = ["lua", pluginDir + "/read.lua", "-e", split.found ? split.body : ""]
+    bodyReader.command = ["/usr/bin/lua", pluginDir + "/read.lua", "-e", split.found ? split.body : ""]
     bodyReader.running = true
   }
 
@@ -269,7 +280,7 @@ Panel {
     root.errorText = ""
     root.statusText = "Checking…"
     root.pendingBody = Lua.renderBody(gestures, tunables, Schema)
-    checkProc.command = ["lua", pluginDir + "/read.lua", "--check", "-e", root.pendingBody]
+    checkProc.command = ["/usr/bin/lua", pluginDir + "/read.lua", "--check", "-e", root.pendingBody]
     checkProc.running = true
   }
 
@@ -291,6 +302,8 @@ Panel {
 
   Process {
     id: bodyReader
+    clearEnvironment: true
+    environment: root.processEnvironment
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.segmentRead("body", Lua.parseHarness(text)) }
     stderr: StdioCollector {
       waitForEnd: true
@@ -303,6 +316,8 @@ Panel {
 
   Process {
     id: beforeReader
+    clearEnvironment: true
+    environment: root.processEnvironment
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.segmentRead("before", Lua.parseHarness(text))
@@ -318,6 +333,8 @@ Panel {
 
   Process {
     id: afterReader
+    clearEnvironment: true
+    environment: root.processEnvironment
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.segmentRead("after", Lua.parseHarness(text))
@@ -336,6 +353,8 @@ Panel {
   // message, which names the line and says what it choked on.
   Process {
     id: checkProc
+    clearEnvironment: true
+    environment: root.processEnvironment
     stderr: StdioCollector { waitForEnd: true }
     onExited: function (code) {
       if (code === 0) { root.writeChecked(); return }
@@ -349,14 +368,18 @@ Panel {
 
   Process {
     id: reloadProc
-    command: ["hyprctl", "reload"]
+    clearEnvironment: true
+    environment: root.processEnvironment
+    command: ["/usr/bin/hyprctl", "reload"]
     onExited: errorsProc.running = true
   }
 
   // Hyprland is the last word on whether the file it just read is good.
   Process {
     id: errorsProc
-    command: ["hyprctl", "configerrors"]
+    clearEnvironment: true
+    environment: root.processEnvironment
+    command: ["/usr/bin/hyprctl", "configerrors"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
