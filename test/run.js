@@ -519,11 +519,12 @@ console.log("\nlayout arithmetic")
 
 // Defaults from the shell's Commons/Style.qml. A user theme can scale these,
 // but the ratio is what matters and it does not change.
-const STYLE = { dropdownWidth: 240, numberFieldWidth: 120, controlGap: 8, panelPadding: 18 }
+// panelPadding is KeyboardPanel's popupPadding: the card is the shell's popup.
+const STYLE = { dropdownWidth: 240, numberFieldWidth: 120, controlGap: 8, panelPadding: 14 }
 const ACTION_BUTTON = 32
 
 const panelSrc = fs.readFileSync(path.join(root, "Panel.qml"), "utf8")
-const cardMatch = panelSrc.match(/width:\s*Math\.min\(Style\.space\((\d+)\)/)
+const cardMatch = panelSrc.match(/contentWidth:\s*panel\.fittedContentWidth\(Style\.space\((\d+)\)/)
 check("the card width is readable from Panel.qml", !!cardMatch)
 
 if (cardMatch) {
@@ -689,16 +690,27 @@ const manifest = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "u
 const iconSrc = fs.readFileSync(path.join(root, manifest.entryPoints.barWidget || "BarIcon.qml"), "utf8")
 const readme = fs.readFileSync(path.join(root, "README.md"), "utf8")
 
-check("the manifest declares panel, service and bar-widget",
-  ["panel", "service", "bar-widget"].every(k => manifest.kinds.indexOf(k) !== -1))
+check("the manifest declares service and bar-widget, and no panel kind",
+  ["service", "bar-widget"].every(k => manifest.kinds.indexOf(k) !== -1)
+    && manifest.kinds.indexOf("panel") === -1,
+  "a panel kind would make the shell route toggle to a loader the popup is not in")
 check("the bar-widget entry point exists",
   fs.existsSync(path.join(root, String(manifest.entryPoints.barWidget))))
 check("the widget defaults to the right section, where the neighbours put theirs",
   manifest.barWidget && manifest.barWidget.defaultSection === "right")
 check("the widget names the plugin id as its moduleName",
   iconSrc.indexOf('moduleName: "' + manifest.id + '"') !== -1)
-check("the widget toggles through the shell rather than owning a window",
-  /bar\.shell\.toggle\(root\.moduleName\)/.test(iconSrc) && !/PanelWindow|Loader/.test(iconSrc))
+check("the widget loads the panel and forwards its lifecycle, as the shell's clock does",
+  /source:\s*Qt\.resolvedUrl\("Panel\.qml"\)/.test(iconSrc)
+    && ["open", "close", "toggle", "closeForPopoutSwitch"].every(f => iconSrc.indexOf("function " + f + "()") !== -1)
+    && /readonly property bool opened/.test(iconSrc))
+check("the panel is the shell's popup card, not a window of its own",
+  /^Panel \{/m.test(panelSrc) && /KeyboardPanel \{/.test(panelSrc)
+    && !/PanelWindow|Color\.menu|WlrLayershell/.test(panelSrc))
+check("the panel leaves IPC to the shell, so it registers once, not once per monitor",
+  /manageIpc:\s*false/.test(panelSrc) && !/IpcHandler \{/.test(panelSrc))
+check("the panel finds read.lua next to itself, wherever it is installed",
+  /Qt\.resolvedUrl\("\."\)/.test(panelSrc) && !/__sourceDir/.test(panelSrc))
 check("the widget file does not share a name with the type it extends",
   path.basename(String(manifest.entryPoints.barWidget)) !== "BarWidget.qml")
 check("the marketplace preview is a root preview.png",

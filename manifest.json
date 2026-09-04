@@ -9,18 +9,16 @@
   "homepage": "https://github.com/TechLuddite/luddite-gestures",
   "repository": "https://github.com/TechLuddite/luddite-gestures",
   "kinds": [
-    "panel",
     "service",
     "bar-widget"
   ],
   "entryPoints": {
-    "panel": "Panel.qml",
     "service": "Service.qml",
     "barWidget": "BarIcon.qml"
   },
   "barWidget": {
     "displayName": "Luddite Gestures",
-    "description": "Opens the touchpad gesture editor.",
+    "description": "Touchpad gesture editor, under one icon.",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right"
