@@ -15,6 +15,13 @@ import "Schema.js" as Schema
 // Left alone, a dropdown would show the panel's last edit forever and quietly
 // ignore Revert or a change made in the file. So each of those re-arms its
 // binding with Qt.binding() straight after telling the panel what changed.
+//
+// NumberField is the other way round. Its `value` is only ever the binding it
+// was given -- the spinbox inside it changes, `value` does not -- so a handler
+// that reads `<id>.value` gets the number from before the click. Measured: one
+// press on the up arrow, signal argument 4, `value` still 3. Every NumberField
+// handler here reads the signal argument and nothing else. The spinbox's own
+// binding survives the click, so no re-arm is needed on this side.
 Rectangle {
   id: row
 
@@ -77,7 +84,7 @@ Rectangle {
         foreground: row.foreground
         accent: row.accent
         fontFamily: row.fontFamily
-        onModified: row.edited(row.rowIndex, "fingers", fingers.value)
+        onModified: function (v) { row.edited(row.rowIndex, "fingers", v) }
       }
 
       Dropdown {
@@ -260,7 +267,7 @@ Rectangle {
         foreground: row.foreground
         accent: row.accent
         fontFamily: row.fontFamily
-        onModified: row.edited(row.rowIndex, "scale", scale.value / Schema.FIELDS.scale.scale)
+        onModified: function (v) { row.edited(row.rowIndex, "scale", v / Schema.FIELDS.scale.scale) }
       }
 
       ColumnLayout {
@@ -332,7 +339,7 @@ Rectangle {
         foreground: row.foreground
         accent: row.accent
         fontFamily: row.fontFamily
-        onModified: row.edited(row.rowIndex, "double_within_ms", within.value)
+        onModified: function (v) { row.edited(row.rowIndex, "double_within_ms", v) }
       }
 
       NumberField {
@@ -348,7 +355,7 @@ Rectangle {
         foreground: row.foreground
         accent: row.accent
         fontFamily: row.fontFamily
-        onModified: row.edited(row.rowIndex, "double_min_distance", travel.value)
+        onModified: function (v) { row.edited(row.rowIndex, "double_min_distance", v) }
       }
 
       ColumnLayout {

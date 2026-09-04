@@ -142,10 +142,10 @@ panel controls.
    unregister a gesture, so evaluating a draft would stack it on top of the real
    ones instead of replacing them, and the preview would lie.
 
-## Two QML traps that cost real time
+## Three QML traps that cost real time
 
-Both are invisible: QML reports nothing, and the symptom looks like something
-else entirely. Both are guarded by source-level checks in `test/run.js`, because
+All three are invisible: QML reports nothing, and the symptom looks like something
+else entirely. All are guarded by source-level checks in `test/run.js`, because
 the failure lives where no pure-JS test can reach.
 
 **A Repeater fed a JS array rebuilds every delegate when that array is
@@ -160,6 +160,15 @@ delegate reads `root.gestures[index]`. Do not change that back.
 a control shows the last edit forever and goes deaf to Revert and to changes made
 in the file. Every self-assigning control re-arms with `Qt.binding()` straight
 after telling the panel what changed.
+
+**A NumberField's `value` never changes; only its signal argument does.** The
+shell's control binds its spinbox *from* `value` and nothing writes back, so a
+handler that reads `fingers.value` gets the number from before the click.
+Measured in a live Quickshell: press the up arrow once, the signal says 4, the
+spinbox shows 4, `value` still says 3. Every gesture on screen said "4 fingers"
+while the model, the conflict warnings and the file all said 3. Every
+`onModified` reads its argument and nothing else; `test/run.js` checks that.
+The spinbox's own binding survives the click, so Revert works without a re-arm.
 
 Related: a delegate must not declare a property named `index`. A Repeater injects
 one, the two collide silently, and every row reports 0 — so every edit lands on
@@ -180,7 +189,7 @@ the site.
 ## Testing
 
 ```bash
-node test/run.js          # 154 checks; no compositor needed
+node test/run.js          # 175 checks; no compositor needed
 omarchy plugin validate . # what the shell enforces at install
 ```
 
