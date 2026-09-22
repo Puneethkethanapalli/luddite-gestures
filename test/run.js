@@ -23,6 +23,8 @@ const Schema = load("Schema.js", [
   "GUARDABLE_ACTIONS", "DOUBLE_DIRECTIONS", "DOUBLE_FIELDS", "canDouble",
   "DISPATCHERS", "DISPATCH_PREFIX", "ACTION_OPTIONS", "dispatchAction",
   "isDispatchAction", "dispatcherOf",
+  "SCREENSHOT_PREFIX", "SCREENSHOT_MODES", "screenshotAction",
+  "isScreenshotAction", "screenshotModeOf",
   "tunableFor", "isValidDirection", "isValidAction",
   "actionFields", "badModifier", "defaultMode", "canonicalDirection",
   "fieldDefault", "fieldEmpty", "fieldSpec", "modsToList", "modsFromList",
@@ -313,14 +315,15 @@ const DISPATCH = {
   dispatch_args: '{ direction = "l" }',
 }
 
-check("the dropdown offers every built-in action and every dispatcher",
-  Schema.ACTION_OPTIONS.length === Schema.ACTIONS.length + Schema.DISPATCHERS.length)
+check("the dropdown offers every built-in action, the screenshot action and every dispatcher",
+  Schema.ACTION_OPTIONS.length === Schema.ACTIONS.length + 1 + Schema.DISPATCHERS.length)
 check("the built-in actions come first, where most gestures will want them",
   Schema.ACTION_OPTIONS.slice(0, Schema.ACTIONS.length)
     .every((o, i) => o.value === Schema.ACTIONS[i].value))
-check("a dispatcher value can never collide with a built-in action",
+check("a dispatcher value can never collide with a built-in action or a screenshot action",
   Schema.ACTIONS.every(a => a.value.indexOf(Schema.DISPATCH_PREFIX) === -1)
-    && Schema.ACTIONS.every(a => a.value.indexOf(":") === -1))
+    && Schema.ACTIONS.every(a => a.value.indexOf(":") === -1)
+    && Schema.SCREENSHOT_MODES.every(m => Schema.screenshotAction(m.value).indexOf(Schema.DISPATCH_PREFIX) === -1))
 check("a dispatcher action round-trips through its spelling",
   Schema.dispatcherOf(Schema.dispatchAction("window.close")) === "window.close")
 check("a dispatcher the compositor does not have is not a valid action",
@@ -365,6 +368,46 @@ check("bad argument text blocks the save",
   Lua.findFieldErrors([Object.assign({}, DISPATCH, { dispatch_args: "{ a = 1" })], Schema).length > 0)
 check("good argument text does not",
   Lua.findFieldErrors([DISPATCH], Schema).length === 0)
+
+// ---------------------------------------------------------------------------
+console.log("\nscreenshot action")
+
+const SCREENSHOT = {
+  fingers: 3, direction: "down", action: "screenshot:smart", mods: "",
+  screenshot_mode: "smart",
+}
+
+check("a screenshot action round-trips through its spelling",
+  Schema.screenshotModeOf(Schema.screenshotAction("region")) === "region")
+check("a screenshot action is valid for every offered mode",
+  Schema.SCREENSHOT_MODES.every(m => Schema.isValidAction(Schema.screenshotAction(m.value))))
+check("a screenshot action with a bogus mode is not valid",
+  !Schema.isValidAction("screenshot:selfie"))
+check("a screenshot action asks for its mode field and nothing else",
+  Schema.actionFields("screenshot:smart").join() === "screenshot_mode")
+check("a screenshot action is labelled Screenshot in the dropdown",
+  Schema.actionLabel("screenshot:region") === "Screenshot")
+check("a screenshot action is not a dispatcher and vice versa",
+  !Schema.isDispatchAction("screenshot:smart") && !Schema.isScreenshotAction("dispatch:focus"))
+check("the screenshot prefix cannot collide with any built-in action",
+  Schema.ACTIONS.every(a => !Schema.isScreenshotAction(a.value)))
+check("a screenshot gesture needs the helper",
+  Lua.needsHelper(SCREENSHOT, Schema)
+    && !Lua.needsHelper({ action: "close" }, Schema))
+check("a screenshot gesture renders the exec_cmd call",
+  Lua.dispatchCall(SCREENSHOT, Schema) === 'hl.dsp.exec_cmd("omarchy-capture-screenshot smart")',
+  Lua.dispatchCall(SCREENSHOT, Schema))
+check("a screenshot gesture with region mode renders the right call",
+  Lua.dispatchCall(Object.assign({}, SCREENSHOT, { action: "screenshot:region", screenshot_mode: "region" }), Schema)
+    === 'hl.dsp.exec_cmd("omarchy-capture-screenshot region")')
+check("the guard is offered for a screenshot gesture",
+  Schema.canDouble("screenshot:smart", "down"))
+check("the guard is refused for a screenshot pinch",
+  !Schema.canDouble("screenshot:smart", "pinch"))
+check("the rendered helper call keeps both action and screenshot_mode",
+  Lua.renderHelperGesture(SCREENSHOT, Schema).indexOf('action = "screenshot:smart"') !== -1
+    && Lua.renderHelperGesture(SCREENSHOT, Schema).indexOf('screenshot_mode = "smart"') !== -1,
+  Lua.renderHelperGesture(SCREENSHOT, Schema))
 
 // ---------------------------------------------------------------------------
 console.log("\nfence splicing")
@@ -571,7 +614,7 @@ if (cardMatch) {
   // rather than shove the sections below it off-screen.
   const rowSrc = fs.readFileSync(path.join(root, "GestureRow.qml"), "utf8")
   check("every wide control in a row can shrink",
-    (rowSrc.match(/Layout\.minimumWidth/g) || []).length >= 12,
+    (rowSrc.match(/Layout\.minimumWidth/g) || []).length >= 13,
     "each Dropdown/TextField/MultiSelect needs a Layout.minimumWidth")
   check("no control in a row is pinned with a fixed width",
     !/^\s*width:\s*Style\.spacing\.dropdownWidth/m.test(rowSrc))
@@ -597,7 +640,7 @@ check("the delegate does not self-assign index",
 check("the delegate passes the injected index through to rowIndex",
   /^\s*rowIndex:\s*index\s*$/m.test(panelQml))
 check("GestureRow emits the row number it was given",
-  (rowSrc.match(/row\.(edited|removed)\(row\.rowIndex/g) || []).length >= 9,
+  (rowSrc.match(/row\.(edited|removed)\(row\.rowIndex/g) || []).length >= 11,
   "every control must report rowIndex")
 
 // ---------------------------------------------------------------------------
@@ -641,7 +684,7 @@ check("the delegate does not depend on modelData, which a count model has none o
 // Every one of those has to put the binding back, or the row goes deaf to
 // Revert and to edits made in the file.
 const SELF_ASSIGNING = [
-  ["Dropdown", /value = Qt\.binding/g, 3],
+  ["Dropdown", /value = Qt\.binding/g, 4],
   ["MultiSelect", /values = Qt\.binding/g, 1],
   ["TextField", /text = Qt\.binding/g, 4],
 ]
@@ -676,7 +719,7 @@ for (const [file, src, count] of NUMBER_HANDLERS) {
 // the renderer can write has to be carried.
 const tagBody = panelQml.slice(panelQml.indexOf("function tag("), panelQml.indexOf("function copyGesture"))
 const CARRIED = ["fingers", "direction", "action", "mods", "custom", "disable_inhibit", "double"]
-  .concat(Schema.FIELD_NAMES, Schema.DOUBLE_FIELDS)
+  .concat(Schema.FIELD_NAMES, Schema.DOUBLE_FIELDS, ["screenshot_mode"])
 for (const name of CARRIED)
   check(`Panel.tag() carries ${name}`, new RegExp("\\b" + name + ":").test(tagBody))
 
@@ -999,6 +1042,26 @@ if (!lua) {
     JSON.stringify(dispatchBack.gestures[0]))
   check("a dispatcher gesture survives a full round trip byte-for-byte",
     Lua.renderBody(dispatchBack.gestures, {}, Schema) === dispatchBody)
+
+  // A screenshot gesture, end to end: the panel writes a callback that calls
+  // exec_cmd with omarchy-capture-screenshot, and read.lua must hand it back
+  // as a row in the dropdowns with its mode intact.
+  const screenshotBody = Lua.renderBody([{
+    fingers: 3, direction: "down", action: "screenshot:region", mods: "",
+    screenshot_mode: "region",
+  }], {}, Schema)
+  const screenshotBack = Lua.parseHarness(
+    execFileSync("lua", [path.join(root, "read.lua"), "-e", screenshotBody], { encoding: "utf8" }))
+
+  check("a screenshot gesture reads back as one editable gesture",
+    screenshotBack.gestures.length === 1 && screenshotBack.gestures[0].custom === false,
+    JSON.stringify(screenshotBack.gestures))
+  check("a screenshot gesture reads back with its action and mode",
+    screenshotBack.gestures[0].action === "screenshot:region"
+      && screenshotBack.gestures[0].screenshot_mode === "region",
+    JSON.stringify(screenshotBack.gestures[0]))
+  check("a screenshot gesture survives a full round trip byte-for-byte",
+    Lua.renderBody(screenshotBack.gestures, {}, Schema) === screenshotBody)
 
   // The helper was called luddite.double before it also handled dispatchers. A
   // block written by the older panel and not yet re-saved still has to read, or

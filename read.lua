@@ -154,7 +154,8 @@ local function recordRun(spec, forceDouble)
     tonumber(spec.within_ms) or 0,
     tonumber(spec.min_distance) or 0,
     spec.hint or "",
-    spec.args or "")
+    spec.args or "",
+    spec.screenshot_mode or "")
 end
 
 local luddite = {

@@ -109,6 +109,29 @@ var DISPATCH_PREFIX = "dispatch:"
 
 function dispatchAction(path) { return DISPATCH_PREFIX + path }
 
+// A screenshot action is a plugin-level convenience that generates an
+// hl.dsp.exec_cmd("omarchy-capture-screenshot <mode>") call under the hood.
+// Spelled "screenshot:<mode>" so it cannot collide with a built-in action or a
+// dispatcher.
+var SCREENSHOT_PREFIX = "screenshot:"
+
+var SCREENSHOT_MODES = [
+  { value: "smart",      label: "Smart" },
+  { value: "region",     label: "Region" },
+  { value: "windows",    label: "Windows" },
+  { value: "fullscreen", label: "Fullscreen" }
+]
+
+function screenshotAction(mode) { return SCREENSHOT_PREFIX + (mode || "smart") }
+
+function isScreenshotAction(value) {
+  return String(value || "").indexOf(SCREENSHOT_PREFIX) === 0
+}
+
+function screenshotModeOf(value) {
+  return isScreenshotAction(value) ? String(value).substring(SCREENSHOT_PREFIX.length) : ""
+}
+
 function isDispatchAction(value) {
   return String(value || "").indexOf(DISPATCH_PREFIX) === 0
 }
@@ -118,12 +141,14 @@ function dispatcherOf(value) {
 }
 
 // What the "Does" dropdown offers: the built-in gesture actions first, because
-// they are what Hyprland runs natively and what most gestures want, then every
-// dispatcher. Long enough that the control has to be searchable.
+// they are what Hyprland runs natively and what most gestures want, then the
+// screenshot convenience, then every dispatcher. Long enough that the control
+// has to be searchable.
 var ACTION_OPTIONS = (function () {
   var out = []
   for (var i = 0; i < ACTIONS.length; i++)
     out.push({ value: ACTIONS[i].value, label: ACTIONS[i].label })
+  out.push({ value: screenshotAction("smart"), label: "Screenshot" })
   for (var k = 0; k < DISPATCHERS.length; k++)
     out.push({ value: dispatchAction(DISPATCHERS[k]), label: DISPATCHERS[k] })
   return out
@@ -151,6 +176,7 @@ var ACTION_OPTIONS = (function () {
 //     travelled, out of the `delta` on each update; a pinch reports its motion
 //     differently, so the box stays hidden there.
 var GUARDABLE_ACTIONS = ["close", "float"]
+var GUARDABLE_SCREENSHOT = true  // screenshot is discrete and one-shot
 var DOUBLE_DIRECTIONS = ["left", "right", "up", "down", "horizontal", "vertical", "swipe"]
 
 function canDouble(action, direction) {
@@ -158,7 +184,9 @@ function canDouble(action, direction) {
   // A dispatcher gesture is already a callback the panel writes, and the call it
   // makes is the user's own -- there is no argument for this side to get wrong,
   // so the guard is offered for all of them.
-  return isDispatchAction(action) || GUARDABLE_ACTIONS.indexOf(action) !== -1
+  // Screenshot is discrete and one-shot, so the guard is offered too.
+  return isDispatchAction(action) || isScreenshotAction(action)
+    || GUARDABLE_ACTIONS.indexOf(action) !== -1
 }
 
 // The knobs the guard exposes, and what they start at. Defaults are the ones
@@ -216,6 +244,11 @@ var FIELDS = {
   dispatch_args: {
     kind: "text", label: "Arguments (Lua)",
     placeholder: "empty, or { direction = \"l\" }", def: ""
+  },
+  // The screenshot mode, chosen from a dropdown rather than typed. The generated
+  // Lua calls exec_cmd("omarchy-capture-screenshot <mode>").
+  screenshot_mode: {
+    kind: "choice", label: "Mode", options: SCREENSHOT_MODES, def: "smart"
   }
 }
 
@@ -235,7 +268,7 @@ function fieldSpec(name) { return FIELDS[name] || null }
 // -- which is what renderGesture omits. Switching to an action that does not
 // take a field resets it to this rather than leaving the old value behind to
 // be written out again.
-var FIELD_NAMES = ["mode", "workspace_name", "scale", "zoom_level", "dispatch_args"]
+var FIELD_NAMES = ["mode", "workspace_name", "scale", "zoom_level", "dispatch_args", "screenshot_mode"]
 
 function fieldEmpty(name) {
   var spec = FIELDS[name]
@@ -289,6 +322,7 @@ function directionLabel(value) {
 }
 
 function actionLabel(value) {
+  if (isScreenshotAction(value)) return "Screenshot"
   if (isDispatchAction(value)) return dispatcherOf(value)
   for (var i = 0; i < ACTIONS.length; i++)
     if (ACTIONS[i].value === value) return ACTIONS[i].label
@@ -296,6 +330,7 @@ function actionLabel(value) {
 }
 
 function actionFields(value) {
+  if (isScreenshotAction(value)) return ["screenshot_mode"]
   if (isDispatchAction(value)) return ["dispatch_args"]
   for (var i = 0; i < ACTIONS.length; i++)
     if (ACTIONS[i].value === value) return ACTIONS[i].fields
@@ -311,6 +346,12 @@ function tunableFor(key) {
 function isValidDirection(v) { return COVERAGE.hasOwnProperty(canonicalDirection(v)) }
 
 function isValidAction(v) {
+  if (isScreenshotAction(v)) {
+    var sm = screenshotModeOf(v)
+    for (var j = 0; j < SCREENSHOT_MODES.length; j++)
+      if (SCREENSHOT_MODES[j].value === sm) return true
+    return false
+  }
   if (isDispatchAction(v)) return DISPATCHERS.indexOf(dispatcherOf(v)) !== -1
   for (var i = 0; i < ACTIONS.length; i++) if (ACTIONS[i].value === v) return true
   return false

@@ -120,13 +120,18 @@ var RUN_HELPER = [
 
 // A gesture Hyprland's own parser cannot express, so the panel writes Lua.
 function needsHelper(g, schema) {
-  return !!(g && (g.double || schema.isDispatchAction(g.action)))
+  return !!(g && (g.double || schema.isDispatchAction(g.action) || schema.isScreenshotAction(g.action)))
 }
 
 // The call the gesture makes. A dispatcher action drops the user's own argument
 // text between the parentheses, exactly as a keybind would write it; the two
-// guardable built-ins map to the dispatcher that matches them.
+// guardable built-ins map to the dispatcher that matches them; a screenshot
+// action calls exec_cmd with the omarchy-capture-screenshot command.
 function dispatchCall(g, schema) {
+  if (schema.isScreenshotAction(g.action)) {
+    var mode = g.screenshot_mode || schema.screenshotModeOf(g.action) || "smart"
+    return 'hl.dsp.exec_cmd("omarchy-capture-screenshot ' + mode + '")'
+  }
   if (schema.isDispatchAction(g.action))
     return "hl.dsp." + schema.dispatcherOf(g.action) + "(" + String(g.dispatch_args || "") + ")"
   if (g.action === "float") return "hl.dsp.window.float()"
@@ -145,6 +150,8 @@ function renderHelperGesture(g, schema) {
   if (g.mods) parts.push("mods = " + luaString(g.mods))
   if (schema.isDispatchAction(g.action) && g.dispatch_args)
     parts.push("args = " + luaString(g.dispatch_args))
+  if (schema.isScreenshotAction(g.action) && g.screenshot_mode)
+    parts.push("screenshot_mode = " + luaString(g.screenshot_mode))
   if (g.double) {
     parts.push("double = true")
     parts.push("within_ms = " + luaNumber(g.double_within_ms))
@@ -317,7 +324,8 @@ function parseHarness(stdout) {
         double_within_ms: f[12] ? Number(f[12]) || 0 : 0,
         double_min_distance: f[13] ? Number(f[13]) || 0 : 0,
         double_hint: f[14] || "",
-        dispatch_args: f[15] || ""
+        dispatch_args: f[15] || "",
+        screenshot_mode: f[16] || ""
       })
     } else if (f[0] === "c" && f.length >= 4) {
       result.tunables[f[1]] = f[2] === "number" ? Number(f[3])

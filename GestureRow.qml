@@ -51,6 +51,7 @@ Rectangle {
   readonly property bool hasScale: fields.indexOf("scale") !== -1
   readonly property bool hasZoom: fields.indexOf("zoom_level") !== -1
   readonly property bool hasArgs: fields.indexOf("dispatch_args") !== -1
+  readonly property bool hasScreenshotMode: fields.indexOf("screenshot_mode") !== -1
 
   // Hyprland matches one swipe at a time, so "twice, quickly" is a guard the
   // panel writes as Lua. It is only offered where that Lua can be got right --
@@ -166,6 +167,29 @@ Rectangle {
       Layout.leftMargin: Style.spacing.huge
       visible: row.fields.length > 0 || row.canDouble
       spacing: Style.spacing.controlGap
+
+      // The screenshot mode dropdown, visible only for screenshot actions.
+      Dropdown {
+        id: screenshotMode
+        visible: row.hasScreenshotMode
+        Layout.fillWidth: visible
+        Layout.preferredWidth: visible ? Style.spacing.dropdownWidth : 0
+        Layout.maximumWidth: Style.spacing.dropdownWidth
+        Layout.minimumWidth: visible ? Style.space(120) : 0
+        label: Schema.FIELDS.screenshot_mode.label
+        options: Schema.SCREENSHOT_MODES
+        value: row.gesture.screenshot_mode || Schema.fieldDefault("screenshot_mode")
+        foreground: row.foreground
+        accent: row.accent
+        fontFamily: row.fontFamily
+        onChanged: function (v) {
+          row.edited(row.rowIndex, "screenshot_mode", v)
+          // Picking a mode also updates the action value to carry the mode,
+          // so the action label stays in sync.
+          row.edited(row.rowIndex, "action", Schema.screenshotAction(v))
+          value = Qt.binding(function () { return row.gesture.screenshot_mode || Schema.fieldDefault("screenshot_mode") })
+        }
+      }
 
       // Raw Lua, dropped between the dispatcher's parentheses exactly as a
       // keybind writes it. Nothing reaches the file until read.lua --check has

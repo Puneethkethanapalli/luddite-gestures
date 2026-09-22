@@ -120,6 +120,7 @@ Panel {
       // Leaving it out here is how a `focus({ direction = "l" })` came back
       // from a reopen as a bare `focus()`, and was saved that way next time.
       dispatch_args: g.dispatch_args || "",
+      screenshot_mode: g.screenshot_mode || "",
       managed: managed, sourceIndex: sourceIndex
     }
   }
@@ -313,6 +314,12 @@ Panel {
         if (fields.indexOf(name) === -1) next[index][name] = Schema.fieldEmpty(name)
         else if (!next[index][name]) next[index][name] = Schema.fieldDefault(name)
       }
+      // When switching to a screenshot action, seed the screenshot_mode from
+      // the action value so the dropdown shows the right mode.
+      if (Schema.isScreenshotAction(value)) {
+        var seedMode = Schema.screenshotModeOf(value)
+        if (seedMode) next[index].screenshot_mode = seedMode
+      }
     }
 
     // The guard only exists for some action/direction pairs, so changing either
@@ -342,7 +349,7 @@ Panel {
                 mode: "", mods: "", workspace_name: "", scale: 0, zoom_level: "",
                 disable_inhibit: false, custom: false,
                 double: false, double_within_ms: 0, double_min_distance: 0,
-                double_hint: "", dispatch_args: "" })
+                double_hint: "", dispatch_args: "", screenshot_mode: "" })
     root.gestures = next
     root.statusText = ""
   }
